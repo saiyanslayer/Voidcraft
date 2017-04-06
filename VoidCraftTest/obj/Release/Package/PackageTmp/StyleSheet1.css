@@ -1,0 +1,16 @@
+﻿body {
+}
+button {
+    font-family: Verdana;
+    font-size: small;
+    font-variant: small-caps;
+    text-transform: none;
+    color: #0000FF;
+    text-align: center;
+    background-color: #FF9966;
+    background-position: 0px;
+    border-style: none;
+    border-radius: 5px;
+    -moz-border-radius: 5px;
+    -webkit-border-radius: 5px;
+}
