@@ -20,6 +20,7 @@ namespace VoidCraftTest.Member
 
         protected void Page_Load(object sender, EventArgs e)
         {
+            //SQL Optimization
             EvaluateEvents();
             EvaluateWorkers();
             EvaluateResources();
