@@ -16,23 +16,124 @@ namespace VoidCraftTest.Member
 {
     public partial class Member : System.Web.UI.Page
     {
+        //global values
         string DatabaseConnection = ConfigurationManager.ConnectionStrings["MembershipSiteConStr"].ConnectionString;
+        Player user;
+        DataTable workers;
+        DataTable events;
+        DataTable resources;
+        DataTable recipes;
+
+        public struct Player
+        {
+            private int userID;
+            private int workerID;
+
+            public int ID
+            {
+                get { return userID;  }
+                set { userID = value; }
+            }
+
+            public int WorkerID
+            {
+                get { return workerID; }
+                set { workerID = value; }
+            }
+        }
+
+        public struct Resource
+        {
+            public string Name { get; private set; }
+            public int Value { get; private set; }
+
+            public Resource(string resource)
+            {
+                string[] text = resource.Split(':');
+
+                Name = text[0];
+                int i;
+                bool result = int.TryParse(text[1], out i);
+                Value = i;
+            }
+        }
 
         protected void Page_Load(object sender, EventArgs e)
         {
             //SQL Optimization
-            EvaluateEvents();
-            EvaluateWorkers();
-            EvaluateResources();
-            EvaluateBuild();
+            GetSqlData();
+
+            EvaluateEvents(events);
+
+            //must occur after EvaluateEvents to accurately show worker situation
+            string sql = String.Format("SELECT worker_name, idworkers, current_job, created_at, worker_type FROM workers w left JOIN events e on w.idworkers = e.worker WHERE w.worker_owner = '{0}'", user.ID);
+            workers = GetDataTable(sql);
+
+            EvaluateWorkers(workers);
+
+            resources = GetResources(); //list of resources that user has
+
+            EvaluateResources(resources);
+
+            sql = String.Format("SELECT idrecipe, recipename, requiredresources, requiredtime, typecreated, typedetail FROM build");
+            recipes = GetDataTable(sql);
+
+            EvaluateBuild(recipes);
         }
 
-        protected void EvaluateBuild()
+        protected void GetSqlData()
         {
-            int user = GetUserID();
-            string sql = String.Format("SELECT idrecipe, recipename, requiredresources, requiredtime, typecreated, typedetail FROM build");
-            DataTable recipes = GetDataTable(sql);
+            MySqlConnection connection = null;
+            DataTable dt = new DataTable();
+            var u = User.Identity.Name;
 
+            try
+            {
+                connection = new MySqlConnection(DatabaseConnection);
+
+                //get the user id
+                string sql = "SELECT idusers FROM users WHERE username = @user";
+                MySqlCommand cmd = new MySqlCommand(sql, connection);
+                cmd.Parameters.AddWithValue("@user", u);
+
+                connection.Open();
+
+                var item = cmd.ExecuteScalar();
+
+                int i = 0;
+                bool result = int.TryParse(item.ToString(), out i);
+                user.ID = i;
+
+                sql = String.Format("SELECT idworkers FROM workers WHERE worker_owner = '{0}' AND worker_type = 'owner' LIMIT 1; ", user.ID);
+                cmd = new MySqlCommand(sql, connection);
+                item = cmd.ExecuteScalar();
+
+                result = int.TryParse(item.ToString(), out i);
+                
+                user.WorkerID = i;
+
+                //get list of events
+                string getEvents = String.Format("SELECT * FROM events WHERE userid = {0}", user.ID);
+                MySqlCommand getEventsCommand = new MySqlCommand(getEvents, connection);
+
+                events = new DataTable();
+                events.Load(getEventsCommand.ExecuteReader());
+            }
+
+            catch (Exception ex)
+            {            }
+
+            finally
+            {
+                if (connection != null)
+                {
+                    connection.Close();
+                }
+            }
+        }
+
+        protected void EvaluateBuild(DataTable recipes)
+        {
             foreach(DataRow recipe in recipes.Rows)
             {
                 string id = recipe[0].ToString();
@@ -65,13 +166,8 @@ namespace VoidCraftTest.Member
         }
 
         //displays the workers belonging to the user
-        protected void EvaluateWorkers()
+        protected void EvaluateWorkers(DataTable workers)
         {
-            //get a list fo workers for the user
-            int user = GetUserID();
-            string sql = String.Format("SELECT worker_name, idworkers, current_job, created_at, worker_type FROM workers w left JOIN events e on w.idworkers = e.worker WHERE w.worker_owner = '{0}'", user);
-            DataTable workers = GetDataTable(sql);
-
             foreach (DataRow row in workers.Rows)
             {
                 string workerName = row[0].ToString();
@@ -106,56 +202,30 @@ namespace VoidCraftTest.Member
 
         protected void AddWorkerButtons(string workerType, int workerID)
         {
+            HtmlGenericControl ul = new HtmlGenericControl("ul");
+            ul.Attributes["class"] = "ListButtons";
+
             switch (workerType)
             {
                 case "owner":
-                    AddOwnerButtons(workerID);
+                    CreateResourceButton(ul, workerID, "CashButton", "Earn Cash", CashButton_Click);
+                    CreateResourceButton(ul, workerID, "TrainButton", "Train Workers", TeamButton_Click);
                     break;
 
                 case "security_team":
-                    AddSecurityTeamButtons(workerID);
+                    CreateResourceButton(ul, workerID, "EarnCashButton", "Security Work", CashButton_Click);
+                    CreateResourceButton(ul, workerID, "ProtectButton", "Protect Assets", ProtectionButton_Click);
                     break;
 
                 case "mining_team":
-                    AddMiningTeamButtons(workerID);
+                    CreateResourceButton(ul, workerID, "EarnCashButton", "Sell Minerals", CashButton_Click);
+                    CreateResourceButton(ul, workerID, "MineButton", "Mine Minerals", MiningButton_Click);
+                    CreateResourceButton(ul, workerID, "TrainButton", "Train Staff", TrainMiningButton_Click);
                     break;
 
                 default:
                     break;
             }
-        }
-
-        protected void AddOwnerButtons(int workerID)
-        {
-            HtmlGenericControl ul = new HtmlGenericControl("ul");
-            ul.Attributes["class"] = "ListButtons";
-
-            CreateResourceButton(ul, workerID, "CashButton", "Earn Cash", CashButton_Click);
-            CreateResourceButton(ul, workerID, "TrainButton", "Train Workers", TeamButton_Click);
-
-            WorkerPanel.Controls.Add(ul);
-        }
-
-        protected void AddSecurityTeamButtons(int workerID)
-        {
-            HtmlGenericControl ul = new HtmlGenericControl("ul");
-            ul.Attributes["class"] = "ListButtons";
-
-            CreateResourceButton(ul, workerID, "EarnCashButton", "Security Work", CashButton_Click);
-            CreateResourceButton(ul, workerID, "ProtectButton", "Protect Assets", ProtectionButton_Click);
-
-            WorkerPanel.Controls.Add(ul);
-        }
-
-        protected void AddMiningTeamButtons(int workerID)
-        {
-            HtmlGenericControl ul = new HtmlGenericControl("ul");
-            ul.Attributes["class"] = "ListButtons";
-
-            CreateResourceButton(ul, workerID, "EarnCashButton", "Sell Minerals", CashButton_Click);
-            CreateResourceButton(ul, workerID, "MineButton", "Mine Minerals", MiningButton_Click);
-            CreateResourceButton(ul, workerID, "TrainButton", "Train Staff", TrainMiningButton_Click);
-
             WorkerPanel.Controls.Add(ul);
         }
 
@@ -205,49 +275,6 @@ namespace VoidCraftTest.Member
             return value;
         }
 
-        //get a single resource the user owns
-        public int GetResource (string resource)
-        {
-            int value = 0;
-            int user = GetUserID();
-
-            MySqlConnection connection = null;
-
-            try
-            {
-                string sql = String.Format("SELECT {0} FROM resources WHERE iduser = '{1}'", resource, user);
-                
-                connection = new MySqlConnection(DatabaseConnection);
-                MySqlCommand cmd = new MySqlCommand(sql, connection);
-
-                connection.Open();
-
-                var result = cmd.ExecuteScalar();
-
-                if (result != null)
-                {
-                        value = Convert.ToInt16(result);
-                }
-
-
-            }
-
-            catch (Exception ex)
-            {
-
-            }
-
-            finally
-            {
-                if (connection != null)
-                {
-                    connection.Close();
-                }
-            }
-
-            return value;
-        }
-
         //get all resources the user owns
         public DataTable GetResources()
         {
@@ -258,7 +285,7 @@ namespace VoidCraftTest.Member
 
             try
             {
-                string sql = String.Format("SELECT * FROM resources WHERE iduser = '{0}' LIMIT 1", user);
+                string sql = String.Format("SELECT * FROM resources WHERE iduser = '{0}' LIMIT 1;", user);
                 connection = new MySqlConnection(DatabaseConnection);
                 MySqlCommand cmd = new MySqlCommand(sql, connection);
                 connection.Open();
@@ -268,41 +295,6 @@ namespace VoidCraftTest.Member
 
             catch (Exception ex)
             {
-            }
-
-            finally
-            {
-                if (connection != null)
-                {
-                    connection.Close();
-                }
-            }
-
-            return value;
-        }
-
-        //get the names of all resources
-        public DataTable GetResourceNames()
-        {
-            DataTable value = new DataTable();
-
-            MySqlConnection connection = null;
-
-            try
-            {
-                string sql = String.Format("SELECT * FROM resource_names");
-
-                connection = new MySqlConnection(DatabaseConnection);
-                MySqlCommand cmd = new MySqlCommand(sql, connection);
-
-                connection.Open();
-
-                value.Load(cmd.ExecuteReader());
-            }
-
-            catch (Exception ex)
-            {
-
             }
 
             finally
@@ -321,7 +313,6 @@ namespace VoidCraftTest.Member
             //checks if the request is valid for each specific type of event
             //if valid, it prepares the sql command
             string sql = "";
-            var user = GetUserID();
             string time = DateTime.Now.Add(delay).ToString("yyyy-MM-dd HH:mm:ss");
             
             switch (event_type)
@@ -329,13 +320,13 @@ namespace VoidCraftTest.Member
                 case "More Cash":
                     sql = String.Format("INSERT INTO events (userid, event_type, event_info, created_at, worker) " +
                         "VALUES ('{0}', '{1}', '{2}', '{3}', '{4}')",
-                        user, "more_cash", "testing", time, workerID);
+                        user.ID, "more_cash", "testing", time, workerID);
                     break;
 
                 case "More Team":
                     sql = String.Format("INSERT INTO events (userid, event_type, event_info, created_at, worker) " +
                         "VALUES ('{0}', '{1}', '{2}', '{3}', '{4}')",
-                        user, "more_team", "testing", time, workerID);
+                        user.ID, "more_team", "testing", time, workerID);
                     break;
 
                 default:
@@ -399,21 +390,26 @@ namespace VoidCraftTest.Member
             return result;
         }
 
-        protected void EvaluateEvents()
+        protected void EvaluateEvents(DataTable events)
         {
-            //get all pending events for the user
-            int user = GetUserID();
-            DataTable dt = GetUserEvents(user);
+            string sql = "";
 
-            foreach(DataRow row in dt.Rows)
+            //get all pending events for the user
+            foreach (DataRow row in events.Rows)
             {
-                ProcessEvent(row, user);
+                sql += ProcessEvent(row);
             }
 
-            UpdateWorkers();
+            if (sql != "")
+            {
+                //update workers after all is done
+                sql += "UPDATE workers w left JOIN events e on w.idworkers = e.worker SET current_job = e.idevents;";
+                EventSqlCommand(sql);
+            }
+
         }
 
-        protected void ProcessEvent(DataRow row, int user)
+        protected string ProcessEvent(DataRow row)
         {
             string sql = "";
             string actionType = row[2].ToString();
@@ -426,34 +422,25 @@ namespace VoidCraftTest.Member
                 switch (actionType)
                 {
                     case "more_cash":
-                            int cash = GetResource("cash");
-                            sql = String.Format("UPDATE resources SET cash = '{0}' WHERE iduser = '{1}'; ",
-                                cash + 1000, user);
-                            sql += String.Format("DELETE FROM events WHERE idevents = '{0}';",
-                                row[0]);
-                            EventSqlCommand(sql);
+                            sql = String.Format("UPDATE resources SET cash = cash + '{0}' WHERE iduser = '{1}'; ",
+                                1000, user.ID);
                         break;
 
                     case "more_team":
-                            int teams = GetResource("teams");
-                            sql = String.Format("Update resources SET teams = {0} WHERE iduser = '{1}'; ",
-                                teams + 1, user);
-                            sql += String.Format("DELETE FROM events WHERE idevents = '{0}';",
-                                row[0]);
-                            EventSqlCommand(sql);
+                            sql = String.Format("Update resources SET teams = teams + {0} WHERE iduser = '{1}'; ",
+                                1, user.ID);
                         break;
 
                     case "create":
                             sql = String.Format("INSERT INTO workers (worker_owner, worker_type, worker_name, worker_level) VALUES ('{0}', '{1}', '{2}', '0'); ",
-                               user, row[3].ToString(), User.Identity.Name.ToString() + " team");
-                            sql += String.Format("DELETE FROM events WHERE idevents = '{0}';",
-                                row[0]);
-                            EventSqlCommand(sql);
+                               user.ID, row[3].ToString(), User.Identity.Name.ToString() + " team");
                         break;
 
                     default:
                         break;
                 }
+                sql += String.Format("DELETE FROM events WHERE idevents = '{0}';", row[0]);
+                return (sql);
             }
 
             else
@@ -483,6 +470,7 @@ namespace VoidCraftTest.Member
 
                 EventsTable.Rows.Add(entry);
             }
+            return "";
         }
 
         protected void TestThing(string text)
@@ -494,17 +482,12 @@ namespace VoidCraftTest.Member
             ResourceTable.Rows.Add(test);
         }
 
-        protected void EvaluateResources()
+        protected void EvaluateResources(DataTable resources)
         {
-            DataTable resourceTable = GetResources(); //list of resources that user has
-            DataTable resourceNames = GetResourceNames(); //list of resources and details for each resource
+            int numberOfColumns = resources.Columns.Count; //counts number of resources
 
-            int numberOfColumns = resourceTable.Columns.Count; //counts number of resources
-
-            foreach (DataRow row in resourceTable.Rows)
+            foreach (DataRow row in resources.Rows)
             {
-                
-
                 //row should represent the current user
                 for (int i = 1; i < numberOfColumns; i++)
                 {
@@ -519,7 +502,7 @@ namespace VoidCraftTest.Member
 
                         //Resource name
                         TableCell cell2 = new TableCell();
-                        cell2.Text = resourceNames.Rows[i][1].ToString();
+                        cell2.Text = resources.Columns[i].ColumnName.ToString();
                         entry.Cells.Add(cell2);
 
                         ResourceTable.Rows.Add(entry);
@@ -608,7 +591,7 @@ namespace VoidCraftTest.Member
             try
             {
                 connection = new MySqlConnection(DatabaseConnection);
-                string sql = "SELECT idusers FROM users WHERE username = @user";
+                string sql = "SELECT idusers FROM users WHERE username = @user LIMIT 1;";
                 MySqlCommand cmd = new MySqlCommand(sql, connection);
 
                 cmd.Parameters.AddWithValue("@user", user);
@@ -651,7 +634,7 @@ namespace VoidCraftTest.Member
 
         protected bool IsOwnerFree(int user)
         {
-            string sql = String.Format("SELECT idworkers, current_job FROM workers WHERE worker_owner = '{0}' AND worker_type = 'owner' ", user);
+            string sql = String.Format("SELECT idworkers, current_job FROM workers WHERE worker_owner = '{0}' AND worker_type = 'owner' LIMIT 1", user);
             DataTable work = GetDataTable(sql); //idworkers, current_job
             int currentJob;
             bool workerIsFree = int.TryParse(work.Rows[0][1].ToString(), out currentJob);
@@ -689,30 +672,73 @@ namespace VoidCraftTest.Member
         {
             bool result = false;
 
-            int user = GetUserID();
-
             //exit if the owner is busy
-            if (!IsOwnerFree(user))
+            if (!IsOwnerFree(user.ID))
             {
                 return false;
             }
 
-            //get list of resources for that user
-            string sql = String.Format("SELECT * FROM resources WHERE iduser = '{0}' LIMIT 1", user);
-            DataTable resources = GetDataTable(sql);
-
-            //get the recipe details
-            sql = String.Format("SELECT * FROM build WHERE recipename = '{0}' LIMIT 1", recipeName);
-            DataTable recipe = GetDataTable(sql);
+            DataRow recipe = recipes.Select("recipename = '" + recipeName + "'").First();
 
             //check if recipe requirements met
-            string[] requirements = recipe.Rows[0][2].ToString().Split(';');
+            string text = recipe[2].ToString();
+            string[] requirements = text.Split(';');
 
-            //if any check fails, the success bool will become false
-            bool success = true;
+            //if resources are enough
+            //foreach resource, subtract the resources
+            if (RequiredResources(requirements))
+            {
+                string update = "";
+                bool firstValue = true;
+
+                foreach (string s in requirements)
+                {
+                    //create value to be subtracted
+                    Resource r = new Resource(s);
+
+                    if (firstValue)
+                    {
+                        firstValue = false;
+                    }
+                    else
+                    {
+                        update += ", ";
+                    }
+
+                    update += String.Format("{0} = {0} - '{1}'",
+                             r.Name, r.Value);
+                }
+
+                //take resources, create worker, get new worker's id, assign it to building itself, 
+                string sql = String.Format("UPDATE resources SET {0} WHERE iduser = '{1}';", 
+                    update, user.ID);
+
+                string workerType = recipe[5].ToString();
+
+                sql += String.Format("INSERT INTO workers(worker_owner, worker_type, worker_name) VALUES('{0}', '{1}', '{2}');",
+                    user.ID, workerType, User.Identity.Name + "s Team");
+
+                TimeSpan delay = new TimeSpan(0, Convert.ToInt16(recipe[3].ToString()), 0);
+                string time = DateTime.Now.Add(delay).ToString("yyyy-MM-dd HH:mm:ss");
+
+                sql += String.Format("INSERT INTO events(userid, event_type, event_info, created_at, worker)" +
+                    "VALUES('{0}', 'create', '{1}', '{2}', last_insert_id());",
+                    user.ID, workerType, time);
+
+                sql += "UPDATE workers w left JOIN events e on w.idworkers = e.worker SET current_job = e.idevents;";
+                
+                result = EventSqlCommand(sql);
+            }
+
+            return result;
+        }
+
+        protected bool RequiredResources(string[] requirements)
+        {
+            bool result = true;
 
             //determine if there are enough resources
-            for(int i = 0; i < requirements.Count(); i++)
+            for (int i = 0; i < requirements.Count(); i++)
             {
                 string[] cost = requirements[i].Split(':');
                 if (cost.Count() > 1) // if there's an entry
@@ -721,7 +747,7 @@ namespace VoidCraftTest.Member
                     int resourceCost = int.Parse(cost[1]);
                     bool resourceGood = false;
 
-                    for(int ii = 0; ii < resources.Columns.Count; ii++)
+                    for (int ii = 0; ii < resources.Columns.Count; ii++)
                     {
                         string columnName = resources.Columns[ii].ColumnName;
                         if (columnName == resourceName)
@@ -742,68 +768,7 @@ namespace VoidCraftTest.Member
 
                 }
 
-                success = false;
-            }
-
-            //if resources are enough
-            //foreach resource, subtract the resources
-            if (success)
-            {
-                string update = "";
-                bool firstValue = true;
-
-                foreach (string s in requirements)
-                {
-                    //create value to be subtracted
-                    string[] cost = s.Split(':');
-
-                    string resourceName = cost[0];
-                    int resourceCost = Convert.ToInt16(cost[1]);
-
-                    for (int i = 0; i < resources.Columns.Count; i++)
-                    {
-                        string columnName = resources.Columns[i].ColumnName;
-                        if (columnName == resourceName)
-                        {
-                            int resourceAmount = (int)resources.Rows[0][i];
-                            if (resourceAmount >= resourceCost)
-                            {
-                                int remaining = resourceAmount - resourceCost;
-
-                                if (firstValue)
-                                {
-                                    update = String.Format("{0} = '{1}'",
-                                        resourceName, remaining); 
-                                    firstValue = false;
-                                }
-                                else
-                                {
-                                    update += String.Format(", {0} = '{1}'",
-                                        resourceName, remaining);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                //get owner's workerID
-                int workerID = (int)GetSqlScalar("SELECT idworkers FROM workers WHERE worker_owner = '" + user + "' AND worker_type = 'owner' LIMIT 1");
-                
-                //modify user resources
-                sql = String.Format("UPDATE resources SET {0} WHERE iduser = '{1}';",
-                    update, user);
-
-                TimeSpan delay = new TimeSpan(0, Convert.ToInt16(recipe.Rows[0][3].ToString()), 0);
-                string time = DateTime.Now.Add(delay).ToString("yyyy-MM-dd HH:mm:ss");
-
-                string notes = recipe.Rows[0][5].ToString();
-
-                //add event
-                sql += String.Format("INSERT INTO events (userid, event_type, event_info, created_at, worker) " +
-                        "VALUES ('{0}', '{1}', '{2}', '{3}', '{4}')",
-                        user, "create", notes, time, workerID);
-
-                result = EventSqlCommand(sql);
+                result = false;
             }
 
             return result;
